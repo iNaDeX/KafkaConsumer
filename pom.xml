@@ -89,7 +89,11 @@
             <artifactId>flink-connector-kafka-0.10_2.10</artifactId>
             <version>1.3.2</version>
         </dependency>
-
+        <dependency>
+            <groupId>org.twitter4j</groupId>
+            <artifactId>twitter4j-core</artifactId>
+            <version>[4.0,)</version>
+        </dependency>
     </dependencies>
 
     <profiles>
@@ -275,13 +279,12 @@
                             </filters>
                             <!-- If you want to use ./bin/flink run <quickstart jar> uncomment the following lines.
                             This will add a Main-Class entry to the manifest file -->
-                            <!--
+
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>main.StreamingJob</mainClass>
+                                    <mainClass>KafkaConsumer</mainClass>
                                 </transformer>
                             </transformers>
-                            -->
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                         </configuration>
                     </execution>

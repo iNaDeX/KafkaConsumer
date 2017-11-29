@@ -9,7 +9,7 @@ import java.util.Properties;
 public class Context {
     private static final Logger LOG = LoggerFactory.getLogger(Context.class);
 
-    private Properties properties;
+    private final Properties properties;
 
     Context(String configFileLocation) throws Exception {
         properties = new Properties();

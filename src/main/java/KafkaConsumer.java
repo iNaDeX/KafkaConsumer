@@ -1,11 +1,13 @@
-import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.common.typeinfo.TypeHint;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
-import org.apache.flink.util.Collector;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer010;
-
+import twitter4j.Status;
+import twitter4j.TwitterException;
+import twitter4j.TwitterObjectFactory;
 import java.util.Properties;
 
 public class KafkaConsumer {
@@ -14,23 +16,21 @@ public class KafkaConsumer {
 
     public static void run(Context context) throws Exception {
         // set up the execution environment
-        final StreamExecutionEnvironment env = StreamExecutionEnvironment
-                .getExecutionEnvironment();
+        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         Properties properties = new Properties();
         properties.setProperty("bootstrap.servers", context.getString(BOOTSTRAP_SERVERS));
-        properties.setProperty("group.id", "test");
+        properties.setProperty("group.id", "test"); // consumer group id
         // get input data
-        DataStream<String> text = env.addSource(new FlinkKafkaConsumer010<>(context.getString(KAFKA_TOPIC), new SimpleStringSchema(), properties));
+        DataStream<String> stream = env.addSource(new FlinkKafkaConsumer010<>(context.getString(KAFKA_TOPIC), new SimpleStringSchema(), properties));
 
         // Stream transformations
-        DataStream<Tuple2<String, Integer>> counts =
-            // Foreach
-            text.flatMap(new LineSplitter())
-                    // group by the tuple field "0" and sum up tuple field "1"
-                    .keyBy(0)
-                    .sum(1);
+        DataStream<Status> tweets = stream.map(new JSONParser());
 
-        counts.print();
+        DataStream<Tuple2<String, String>> geoInfo =
+                tweets.filter(tweet -> (tweet.getPlace() != null && tweet.getPlace().getCountry() != null))
+                        .map(tweet -> new Tuple2<>(tweet.getUser().getName(), tweet.getPlace().getCountry()))
+                        .returns(new TypeHint<Tuple2<String,String>>(){});
+        geoInfo.print();
 
         // execute program
         env.execute("Java Flink KafkaConsumer");
@@ -43,6 +43,9 @@ public class KafkaConsumer {
         }
         try {
             String configFileLocation = args[0];
+            /* TODO: use ParameterTool class of Flink instead of custom Context class ?
+            see: https://ci.apache.org/projects/flink/flink-docs-release-1.3/dev/best_practices.html
+             */
             Context context = new Context(configFileLocation);
             KafkaConsumer.run(context);
         } catch (Exception e) {
@@ -50,18 +53,19 @@ public class KafkaConsumer {
         }
     }
     /**
-     * Implements the string tokenizer that splits sentences into words as a user-defined
-     * FlatMapFunction. The function takes a line (String) and splits it into
-     * multiple pairs in the form of "(word,1)" (Tuple2<String, Integer>).
+     * Implements the JSON parser provided by twitter4J into Flink MapFunction
      */
-    public static final class LineSplitter implements FlatMapFunction<String, Tuple2<String, Integer>> {
+    public static final class JSONParser implements MapFunction<String, Status> {
         @Override
-        public void flatMap(String value, Collector<Tuple2<String, Integer>> out) {
-            // normalize and split the line
-            String[] tokens = value.toLowerCase().split("\\W+");
-            // emit the pairs
-            for (String token : tokens) {
-                if (token.length() > 0) out.collect(new Tuple2<>(token, 1));
+        public Status map(String value) {
+            Status status = null;
+            try {
+                status = TwitterObjectFactory.createStatus(value);
+            } catch(TwitterException e) {
+                // TODO: use LOGGER class and add a small explaining message
+                e.printStackTrace();
+            } finally {
+                return status; // return the parsed tweet, or null if exception occured
             }
         }
     }
