@@ -27,8 +27,8 @@ public class KafkaConsumer {
         DataStream<Status> tweets = stream.map(new JSONParser());
 
         DataStream<Tuple2<String, String>> geoInfo =
-                tweets.filter(tweet -> (tweet.getPlace() != null && tweet.getPlace().getCountry() != null))
-                        .map(tweet -> new Tuple2<>(tweet.getUser().getName(), tweet.getPlace().getCountry()))
+                tweets.filter(tweet -> (TweetFunctions.getTweetCountry(tweet) != null))
+                        .map(tweet -> new Tuple2<>(tweet.getUser().getName(), TweetFunctions.getTweetCountry(tweet)))
                         .returns(new TypeHint<Tuple2<String,String>>(){});
         geoInfo.print();
 
