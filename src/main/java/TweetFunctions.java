@@ -15,7 +15,7 @@ public class TweetFunctions {
 
         /*
         TODO: use as favorite metric the GPS Coordinates optionnally provided in the tweet (tweet 'coordinates' field) and extract country
-        free Public Domain project that does that: https://github.com/che0/countries
+        free Public Domain project that does that: https://github.com/AReallyGoodName/OfflineReverseGeocode
         or google maps API (rate limited & on the internet = slow)
          */
 
@@ -44,12 +44,6 @@ public class TweetFunctions {
         int nbFollowers = tweet.getUser().getFollowersCount();
         int engagement = TweetFunctions.getEngagementScore(tweet);
         return Math.sqrt(nbFollowers * engagement); // geometric mean
-    }
-
-    // get the sentiment score of the tweet (negative, neutral, positive) in a range [-1;1]
-    // the higher, the more positive the sentiment
-    public static double getSentimentScore(Status tweet) {
-        throw new UnsupportedOperationException();
     }
 
     // give a score to how well a tweet is engaging with users of Twitter (popularity of the tweet)
