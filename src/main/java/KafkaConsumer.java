@@ -25,17 +25,20 @@ public class KafkaConsumer {
 
         // Stream transformations
         DataStream<Status> tweets = stream.map(new JSONParser());
-        /*
+
+        // test: create a stream of (authorName, countryOfTweet)
         DataStream<Tuple2<String, String>> geoInfo =
                 tweets.filter(tweet -> (TweetFunctions.getTweetCountry(tweet) != null))
                         .map(tweet -> new Tuple2<>(tweet.getUser().getName(), TweetFunctions.getTweetCountry(tweet)))
                         .returns(new TypeHint<Tuple2<String,String>>(){});
         geoInfo.print();
-        */
+
+        /*
+        // test: create a stream of (authorName, keywordsOfTweet)
         DataStream<Tuple2<String, String[]>> keywordsInfo =
                 tweets.map(tweet -> new Tuple2<>(tweet.getUser().getName(), TweetFunctions.getKeywords(tweet)))
                         .returns(new TypeHint<Tuple2<String,String[]>>(){});
-        keywordsInfo.print();
+        keywordsInfo.print();*/
 
         // execute program
         env.execute("Java Flink KafkaConsumer");

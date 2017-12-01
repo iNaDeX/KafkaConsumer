@@ -6,4 +6,5 @@ Behavior:
 
 - Subscribe to Kafka topic.
 - Process data (tweets) using Apache Flink streaming.
-- Store result into HBase.
+- Compute several KPI of brand monitoring
+- Store results into ElasticSearch.
