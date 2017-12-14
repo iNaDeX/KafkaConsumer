@@ -50,4 +50,14 @@ public class BasicSentimentAnalysis {
 
         return Math.tanh(score);
     }
+
+    public String getSentimentLabel(String text) {
+        double score = this.getSentimentScore(text);
+        if(score > 0.3)
+            return "Positive";
+        else if(score < 0.3)
+            return "Negative";
+        else
+            return "Neutral";
+    }
 }

@@ -84,19 +84,6 @@ public class TweetFunctions {
         return retweets+favorites;
     }
 
-    // get the sentiment score of the tweet (negative, neutral, positive) in a range [-1;1]
-    // the higher, the more positive the sentiment
-    public static String getSentimentScorev1(String text) {
-        double score = (Math.random() - 0.5) * 1000;
-        double scorefinal =  Math.tanh(score);
-        if(scorefinal < -0.50)
-            return "Negative";
-        else if(scorefinal > 0.25)
-            return "Positive";
-        else
-            return "Neutral";
-    }
-
     public static String getHashtagsAsString(Status tweet) {
         String[] hashtags = TweetFunctions.getHashtags(tweet);
         StringBuilder sb = new StringBuilder();

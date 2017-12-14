@@ -1,9 +1,13 @@
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.functions.RuntimeContext;
+import org.apache.flink.api.common.state.ListState;
+import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeHint;
 import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.api.java.tuple.Tuple4;
+import org.apache.flink.runtime.state.FunctionInitializationContext;
+import org.apache.flink.runtime.state.FunctionSnapshotContext;
+import org.apache.flink.streaming.api.checkpoint.CheckpointedFunction;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.connectors.elasticsearch.ElasticsearchSinkFunction;
@@ -13,11 +17,11 @@ import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer010;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.client.Requests;
-import org.elasticsearch.index.analysis.CharMatcher;
 import twitter4j.Status;
 import twitter4j.TwitterException;
 import twitter4j.TwitterObjectFactory;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.*;
@@ -72,7 +76,6 @@ public class KafkaConsumer {
                 .returns(new TypeHint<Tuple2<Long, String>>() {});
         keywordsInfo.addSink(new ElasticsearchSink<>(config, transportAddresses, new KeywordsInserter()));
 
-
         // execute program
         env.execute("Java Flink KafkaConsumer");
     }
@@ -95,7 +98,7 @@ public class KafkaConsumer {
     }
 
     /**
-     * Inserts tweet locations into the "twitter-analytics" index.
+     * Inserts tweet locations into elasticsearch.
      */
     public static class LocationInserter
             implements ElasticsearchSinkFunction<Tuple4<String, Double, Double, Long>> {
@@ -114,8 +117,8 @@ public class KafkaConsumer {
             json.put("country", record.f0.toString());      // country
 
             IndexRequest rqst = Requests.indexRequest()
-                    .index("twitter-analytics")        // index name
-                    .type("locations")  // mapping name
+                    .index("locations")        // index name
+                    .type("locationsType")  // mapping name
                     .source(json);
 
             indexer.add(rqst);
@@ -123,7 +126,7 @@ public class KafkaConsumer {
     }
 
     /**
-     * Inserts tweet sentiments into the "twitter-analytics" index.
+     * Inserts tweet sentiments into elasticsearch.
      */
     public static class SentimentInserter implements ElasticsearchSinkFunction<Tuple2<Long, String>> {
 
@@ -140,8 +143,8 @@ public class KafkaConsumer {
             json.put("sentiment", record.f1);      // sentiment
 
             IndexRequest rqst = Requests.indexRequest()
-                    .index("twitter-analytics")        // index name
-                    .type("sentiments")  // mapping name
+                    .index("sentiments")        // index name
+                    .type("sentimentsType")  // mapping name
                     .source(json);
 
             indexer.add(rqst);
@@ -163,12 +166,11 @@ public class KafkaConsumer {
             // construct JSON document to index
             Map<String, String> json = new HashMap<>();
             json.put("time", record.f0.toString());         // timestamp
-            // TODO check that this allows to word cloud on each hashtag of all tweets, and doesn't consider 1 hashtag list as a unique tag
             json.put("hashtags", record.f1);      // hashtags
 
             IndexRequest rqst = Requests.indexRequest()
-                    .index("twitter-analytics")        // index name
-                    .type("hashtags")  // mapping name
+                    .index("hashtags")        // index name
+                    .type("hashtagsType")  // mapping name
                     .source(json);
 
             indexer.add(rqst);
@@ -190,12 +192,11 @@ public class KafkaConsumer {
             // construct JSON document to index
             Map<String, String> json = new HashMap<>();
             json.put("time", record.f0.toString());         // timestamp
-            // TODO check that this allows to word cloud on each keyword of all tweets, and doesn't consider 1 keyword list as a unique tag
             json.put("keywords", record.f1);      // keywords
 
             IndexRequest rqst = Requests.indexRequest()
-                    .index("twitter-analytics")        // index name
-                    .type("keywords")  // mapping name
+                    .index("keywords")        // index name
+                    .type("keywordsType")  // mapping name
                     .source(json);
 
             indexer.add(rqst);
@@ -220,13 +221,43 @@ public class KafkaConsumer {
     /**
      * Maps a tweet to its country, latitude, longitude, and timestamp
      */
-    public static class TweetToSentiment implements MapFunction<Status, Tuple2<Long, String>> {
+    public static class TweetToSentiment implements MapFunction<Status, Tuple2<Long, String>>, CheckpointedFunction {
+
+        private transient ListState<BasicSentimentAnalysis> modelState;
+
+        private transient BasicSentimentAnalysis model;
+
         @Override
         public Tuple2<Long,String> map(Status tweet) throws Exception {
             Long time = tweet.getCreatedAt().getTime();
             String text = tweet.getText();
-            String score = TweetFunctions.getSentimentScorev1(text);
+            String score = this.model.getSentimentLabel(text);
             return new Tuple2<>(time, score);
+        }
+
+        @Override
+        public void snapshotState(FunctionSnapshotContext functionSnapshotContext) throws Exception {
+            // constant model, so nothing to do
+        }
+
+        @Override
+        public void initializeState(FunctionInitializationContext context) throws Exception {
+            ListStateDescriptor<BasicSentimentAnalysis> listStateDescriptor = new ListStateDescriptor<>("model", BasicSentimentAnalysis.class);
+
+            modelState = context.getOperatorStateStore().getUnionListState(listStateDescriptor);
+
+            if (context.isRestored()) {
+                // restore the model from state
+                model = modelState.get().iterator().next();
+            } else {
+                modelState.clear();
+
+                // read the model from somewhere, e.g. read from a file
+                model = new BasicSentimentAnalysis("negative-words.txt", "positive-words.txt");
+
+                // update the modelState so that it is checkpointed from now
+                modelState.add(model);
+            }
         }
     }
 
