@@ -1,14 +1,26 @@
 import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.common.functions.RuntimeContext;
 import org.apache.flink.api.common.typeinfo.TypeHint;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.java.tuple.Tuple3;
+import org.apache.flink.api.java.tuple.Tuple4;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.connectors.elasticsearch.ElasticsearchSinkFunction;
+import org.apache.flink.streaming.connectors.elasticsearch.RequestIndexer;
+import org.apache.flink.streaming.connectors.elasticsearch5.ElasticsearchSink;
 import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer010;
+import org.elasticsearch.action.index.IndexRequest;
+import org.elasticsearch.client.Requests;
+import org.elasticsearch.index.analysis.CharMatcher;
 import twitter4j.Status;
 import twitter4j.TwitterException;
 import twitter4j.TwitterObjectFactory;
-import java.util.Properties;
+
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.util.*;
 
 public class KafkaConsumer {
     private static final String BOOTSTRAP_SERVERS = "bootstrap.servers";
@@ -20,25 +32,46 @@ public class KafkaConsumer {
         Properties properties = new Properties();
         properties.setProperty("bootstrap.servers", context.getString(BOOTSTRAP_SERVERS));
         properties.setProperty("group.id", "test"); // consumer group id
+
+        // set up elasticsearch sink
+        Map<String, String> config = new HashMap<>();
+        config.put("cluster.name", "elasticsearch"); // the name of the actual elasticsearch cluster we connect to
+        // This instructs the sink to emit after every element, otherwise they would be buffered
+        config.put("bulk.flush.max.actions", "1");
+        List<InetSocketAddress> transportAddresses = new ArrayList<>();
+        transportAddresses.add(new InetSocketAddress(InetAddress.getByName("localhost"), 9300));
+
         // get input data
         DataStream<String> stream = env.addSource(new FlinkKafkaConsumer010<>(context.getString(KAFKA_TOPIC), new SimpleStringSchema(), properties));
 
         // Stream transformations
-        DataStream<Status> tweets = stream.map(new JSONParser());
+        DataStream<Status> tweets = stream.map(new JSONParser()).filter(tweet -> ((tweet.getCreatedAt() != null) && (tweet.getText() != null)));
 
-        // test: create a stream of (authorName, countryOfTweet)
-        DataStream<Tuple2<String, String>> geoInfo =
+        // create a stream of GPS information
+        DataStream<Tuple4<String, Double, Double, Long>> geoInfo =
                 tweets.filter(tweet -> (TweetFunctions.getTweetCountry(tweet) != null))
-                        .map(tweet -> new Tuple2<>(tweet.getUser().getName(), TweetFunctions.getTweetCountry(tweet)))
-                        .returns(new TypeHint<Tuple2<String,String>>(){});
-        geoInfo.print();
+                        .filter(tweet -> TweetFunctions.getTweetGPSCoordinates(tweet) != null)
+                        .map(new TweetToLocation());
+        //geoInfo.print();
+        geoInfo.addSink(new ElasticsearchSink<>(config, transportAddresses, new LocationInserter()));
 
-        /*
-        // test: create a stream of (authorName, keywordsOfTweet)
-        DataStream<Tuple2<String, String[]>> keywordsInfo =
-                tweets.map(tweet -> new Tuple2<>(tweet.getUser().getName(), TweetFunctions.getKeywords(tweet)))
-                        .returns(new TypeHint<Tuple2<String,String[]>>(){});
-        keywordsInfo.print();*/
+        // create a stream of Sentiment Analysis
+        DataStream<Tuple2<Long, String>> sentimentInfo = tweets.map(new TweetToSentiment());
+        //sentimentInfo.print();
+        sentimentInfo.addSink(new ElasticsearchSink<>(config, transportAddresses, new SentimentInserter()));
+
+        // create a stream of hashtags
+        DataStream<Tuple2<Long, String>> hashtagsInfo = tweets.filter(tweet -> TweetFunctions.getHashtags(tweet).length > 0)
+                .map(tweet -> new Tuple2<>(tweet.getCreatedAt().getTime(), TweetFunctions.getHashtagsAsString(tweet)))
+                .returns(new TypeHint<Tuple2<Long, String>>() {});
+        hashtagsInfo.addSink(new ElasticsearchSink<>(config, transportAddresses, new HashtagsInserter()));
+
+        // create a stream of keywords
+        DataStream<Tuple2<Long, String>> keywordsInfo = tweets.filter(tweet -> TweetFunctions.getKeywords(tweet).length > 0)
+                .map(tweet -> new Tuple2<>(tweet.getCreatedAt().getTime(), TweetFunctions.getKeywordsAsString(tweet)))
+                .returns(new TypeHint<Tuple2<Long, String>>() {});
+        keywordsInfo.addSink(new ElasticsearchSink<>(config, transportAddresses, new KeywordsInserter()));
+
 
         // execute program
         env.execute("Java Flink KafkaConsumer");
@@ -60,6 +93,143 @@ public class KafkaConsumer {
             System.out.println(e.toString());
         }
     }
+
+    /**
+     * Inserts tweet locations into the "twitter-analytics" index.
+     */
+    public static class LocationInserter
+            implements ElasticsearchSinkFunction<Tuple4<String, Double, Double, Long>> {
+
+        // construct index request
+        @Override
+        public void process(
+                Tuple4<String, Double, Double, Long> record,
+                RuntimeContext ctx,
+                RequestIndexer indexer) {
+
+            // construct JSON document to index
+            Map<String, String> json = new HashMap<>();
+            json.put("time", record.f3.toString());         // timestamp
+            json.put("geolocation", record.f1+","+record.f2);  // lat,lon pair
+            json.put("country", record.f0.toString());      // country
+
+            IndexRequest rqst = Requests.indexRequest()
+                    .index("twitter-analytics")        // index name
+                    .type("locations")  // mapping name
+                    .source(json);
+
+            indexer.add(rqst);
+        }
+    }
+
+    /**
+     * Inserts tweet sentiments into the "twitter-analytics" index.
+     */
+    public static class SentimentInserter implements ElasticsearchSinkFunction<Tuple2<Long, String>> {
+
+        // construct index request
+        @Override
+        public void process(
+                Tuple2<Long, String> record,
+                RuntimeContext ctx,
+                RequestIndexer indexer) {
+
+            // construct JSON document to index
+            Map<String, String> json = new HashMap<>();
+            json.put("time", record.f0.toString());         // timestamp
+            json.put("sentiment", record.f1);      // sentiment
+
+            IndexRequest rqst = Requests.indexRequest()
+                    .index("twitter-analytics")        // index name
+                    .type("sentiments")  // mapping name
+                    .source(json);
+
+            indexer.add(rqst);
+        }
+    }
+
+    /**
+     * Inserts tweet hashtags into the "twitter-analytics" index.
+     */
+    public static class HashtagsInserter implements ElasticsearchSinkFunction<Tuple2<Long, String>> {
+
+        // construct index request
+        @Override
+        public void process(
+                Tuple2<Long, String> record,
+                RuntimeContext ctx,
+                RequestIndexer indexer) {
+
+            // construct JSON document to index
+            Map<String, String> json = new HashMap<>();
+            json.put("time", record.f0.toString());         // timestamp
+            // TODO check that this allows to word cloud on each hashtag of all tweets, and doesn't consider 1 hashtag list as a unique tag
+            json.put("hashtags", record.f1);      // hashtags
+
+            IndexRequest rqst = Requests.indexRequest()
+                    .index("twitter-analytics")        // index name
+                    .type("hashtags")  // mapping name
+                    .source(json);
+
+            indexer.add(rqst);
+        }
+    }
+
+    /**
+     * Inserts tweet keywords into the "twitter-analytics" index.
+     */
+    public static class KeywordsInserter implements ElasticsearchSinkFunction<Tuple2<Long, String>> {
+
+        // construct index request
+        @Override
+        public void process(
+                Tuple2<Long, String> record,
+                RuntimeContext ctx,
+                RequestIndexer indexer) {
+
+            // construct JSON document to index
+            Map<String, String> json = new HashMap<>();
+            json.put("time", record.f0.toString());         // timestamp
+            // TODO check that this allows to word cloud on each keyword of all tweets, and doesn't consider 1 keyword list as a unique tag
+            json.put("keywords", record.f1);      // keywords
+
+            IndexRequest rqst = Requests.indexRequest()
+                    .index("twitter-analytics")        // index name
+                    .type("keywords")  // mapping name
+                    .source(json);
+
+            indexer.add(rqst);
+        }
+    }
+
+
+    /**
+     * Maps a tweet to its country, latitude, longitude, and timestamp
+     */
+    public static class TweetToLocation implements MapFunction<Status, Tuple4<String, Double, Double, Long>> {
+        @Override
+        public Tuple4<String, Double, Double, Long> map(Status tweet) throws Exception {
+            return new Tuple4<>(TweetFunctions.getTweetCountry(tweet),
+                    TweetFunctions.getTweetGPSCoordinates(tweet).getLatitude(),
+                    TweetFunctions.getTweetGPSCoordinates(tweet).getLongitude(),
+                    tweet.getCreatedAt().getTime()
+                    );
+        }
+    }
+
+    /**
+     * Maps a tweet to its country, latitude, longitude, and timestamp
+     */
+    public static class TweetToSentiment implements MapFunction<Status, Tuple2<Long, String>> {
+        @Override
+        public Tuple2<Long,String> map(Status tweet) throws Exception {
+            Long time = tweet.getCreatedAt().getTime();
+            String text = tweet.getText();
+            String score = TweetFunctions.getSentimentScorev1(text);
+            return new Tuple2<>(time, score);
+        }
+    }
+
     /**
      * Implements the JSON parser provided by twitter4J into Flink MapFunction
      */

@@ -84,6 +84,37 @@ public class TweetFunctions {
         return retweets+favorites;
     }
 
+    // get the sentiment score of the tweet (negative, neutral, positive) in a range [-1;1]
+    // the higher, the more positive the sentiment
+    public static String getSentimentScorev1(String text) {
+        double score = (Math.random() - 0.5) * 1000;
+        double scorefinal =  Math.tanh(score);
+        if(scorefinal < -0.50)
+            return "Negative";
+        else if(scorefinal > 0.25)
+            return "Positive";
+        else
+            return "Neutral";
+    }
+
+    public static String getHashtagsAsString(Status tweet) {
+        String[] hashtags = TweetFunctions.getHashtags(tweet);
+        StringBuilder sb = new StringBuilder();
+        for(String hashtag : hashtags) {
+            sb.append(hashtag + " ");
+        }
+        return sb.toString();
+    }
+
+    public static String getKeywordsAsString(Status tweet) {
+        String[] keywords = TweetFunctions.getKeywords(tweet);
+        StringBuilder sb = new StringBuilder();
+        for(String keyword : keywords) {
+            sb.append(keyword + " ");
+        }
+        return sb.toString();
+    }
+
     public static GeoLocation getTweetGPSCoordinates(Status tweet) {
         GeoLocation coordinates = null;
 
