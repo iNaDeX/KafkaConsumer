@@ -88,10 +88,6 @@ acrimoniously
 acrimony
 adamant
 adamantly
-addict
-addicted
-addicting
-addicts
 admonish
 admonisher
 admonishingly
@@ -589,7 +585,6 @@ chastise
 chastisement
 chatter
 chatterbox
-cheap
 cheapen
 cheaply
 cheat
@@ -602,7 +597,6 @@ cheerless
 cheesy
 chide
 childish
-chill
 chilly
 chintzy
 choke
@@ -620,7 +614,6 @@ clique
 clog
 clogged
 clogs
-cloud
 clouding
 cloudy
 clueless
@@ -650,7 +643,6 @@ complaining
 complains
 complaint
 complaints
-complex
 complicated
 complication
 complicit
